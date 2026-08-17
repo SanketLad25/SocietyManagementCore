@@ -5,7 +5,7 @@ using SocietyManagementCore.Models.Entities;
 
 namespace SocietyManagementCore.Services;
 
-public class EventService(SocietyDbContext db, ICurrentUserContext currentUser, AuditLogService auditLog)
+public class EventService(SocietyDbContext db, ICurrentUserContext currentUser, AuditLogService auditLog, EventNotificationService notificationService)
 {
     /// Any authenticated society member sees every event (events.md — universal view access,
     /// matching Complaints). Only creating/editing is narrow.
@@ -134,6 +134,32 @@ public class EventService(SocietyDbContext db, ICurrentUserContext currentUser, 
         return ServiceResult<EventResponse>.Ok(responses[0]);
     }
 
+    /// A distinct, heavier action from Update — not a field on the edit form. Notifies every
+    /// active (Registered or Waitlisted) registrant immediately (events.md Phase 3/4 design).
+    public async Task<ServiceResult<EventResponse>> CancelAsync(int eventId, EventCancelRequest request)
+    {
+        var ev = await FindInSocietyAsync(eventId);
+        if (ev is null)
+        {
+            return ServiceResult<EventResponse>.Fail("Event not found.");
+        }
+
+        if (ev.Status == EventStatuses.Cancelled)
+        {
+            return ServiceResult<EventResponse>.Fail("This event is already cancelled.");
+        }
+
+        ev.Status = EventStatuses.Cancelled;
+        ev.CancelReason = request.Reason;
+        await db.SaveChangesAsync();
+        await auditLog.LogAsync("Cancel", "Event", ev.EventId, request.Reason);
+
+        await notificationService.NotifyCancelledAsync(ev);
+
+        var responses = await ToResponsesAsync(new List<Event> { ev });
+        return ServiceResult<EventResponse>.Ok(responses[0]);
+    }
+
     private Task<Event?> FindInSocietyAsync(int eventId) =>
         currentUser.SocietyId is { } societyId
             ? db.Events.FirstOrDefaultAsync(e => e.EventId == eventId && e.SocietyId == societyId)
@@ -151,24 +177,52 @@ public class EventService(SocietyDbContext db, ICurrentUserContext currentUser, 
             .Where(c => categoryIds.Contains(c.EventCategoryId))
             .ToDictionaryAsync(c => c.EventCategoryId, c => c.CategoryName);
 
-        return events.Select(e => new EventResponse
+        var eventIds = events.Select(e => e.EventId).ToList();
+        var registrations = await db.EventRegistrations
+            .Where(r => eventIds.Contains(r.EventId))
+            .ToListAsync();
+
+        var registeredCounts = registrations
+            .Where(r => r.Status == EventRegistrationStatuses.Registered)
+            .GroupBy(r => r.EventId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var waitlistedCounts = registrations
+            .Where(r => r.Status == EventRegistrationStatuses.Waitlisted)
+            .GroupBy(r => r.EventId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var myRegistrations = currentUser.ResidentId is { } myResidentId
+            ? registrations.Where(r => r.ResidentId == myResidentId).ToDictionary(r => r.EventId, r => r)
+            : new Dictionary<int, EventRegistration>();
+
+        return events.Select(e =>
         {
-            EventId = e.EventId,
-            EventCategoryId = e.EventCategoryId,
-            CategoryName = categoryNames.GetValueOrDefault(e.EventCategoryId, string.Empty),
-            EventName = e.EventName,
-            Description = e.Description,
-            StartOn = e.StartOn,
-            EndOn = e.EndOn,
-            Venue = e.Venue,
-            CoverEmoji = e.CoverEmoji,
-            CoverImagePath = e.CoverImagePath,
-            OrganizerName = e.OrganizerName,
-            MaxParticipants = e.MaxParticipants,
-            RegistrationRequired = e.RegistrationRequired,
-            Status = e.Status,
-            CancelReason = e.CancelReason,
-            CreatedOn = e.CreatedOn,
+            myRegistrations.TryGetValue(e.EventId, out var mine);
+            return new EventResponse
+            {
+                EventId = e.EventId,
+                EventCategoryId = e.EventCategoryId,
+                CategoryName = categoryNames.GetValueOrDefault(e.EventCategoryId, string.Empty),
+                EventName = e.EventName,
+                Description = e.Description,
+                StartOn = e.StartOn,
+                EndOn = e.EndOn,
+                Venue = e.Venue,
+                CoverEmoji = e.CoverEmoji,
+                CoverImagePath = e.CoverImagePath,
+                OrganizerName = e.OrganizerName,
+                MaxParticipants = e.MaxParticipants,
+                RegistrationRequired = e.RegistrationRequired,
+                Status = e.Status,
+                CancelReason = e.CancelReason,
+                CreatedOn = e.CreatedOn,
+                RegisteredCount = registeredCounts.GetValueOrDefault(e.EventId),
+                WaitlistedCount = waitlistedCounts.GetValueOrDefault(e.EventId),
+                MyRegistrationStatus = mine?.Status,
+                MyRegistrationCode = mine?.RegistrationCode,
+                MyParticipantCount = mine?.ParticipantCount,
+            };
         }).ToList();
     }
 }

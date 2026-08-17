@@ -18,4 +18,11 @@ public class EventResponse
     public string Status { get; set; } = string.Empty;
     public string? CancelReason { get; set; }
     public DateTime CreatedOn { get; set; }
+
+    // Registration snapshot (events.md Phase 2) — computed, not stored on Event itself.
+    public int RegisteredCount { get; set; }
+    public int WaitlistedCount { get; set; }
+    public string? MyRegistrationStatus { get; set; }
+    public string? MyRegistrationCode { get; set; }
+    public int? MyParticipantCount { get; set; }
 }

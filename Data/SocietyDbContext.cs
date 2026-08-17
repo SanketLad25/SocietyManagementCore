@@ -35,6 +35,8 @@ public class SocietyDbContext(DbContextOptions<SocietyDbContext> options, ICurre
     public DbSet<NoticeReadStatus> NoticeReadStatuses => Set<NoticeReadStatus>();
     public DbSet<EventCategory> EventCategories => Set<EventCategory>();
     public DbSet<Event> Events => Set<Event>();
+    public DbSet<EventRegistration> EventRegistrations => Set<EventRegistration>();
+    public DbSet<EventNotification> EventNotifications => Set<EventNotification>();
     public DbSet<ComplaintCategory> ComplaintCategories => Set<ComplaintCategory>();
     public DbSet<Complaint> Complaints => Set<Complaint>();
     public DbSet<ComplaintUpdate> ComplaintUpdates => Set<ComplaintUpdate>();
@@ -366,6 +368,29 @@ public class SocietyDbContext(DbContextOptions<SocietyDbContext> options, ICurre
             entity.Property(e => e.CancelReason).HasMaxLength(500);
             entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
             entity.HasOne<EventCategory>().WithMany().HasForeignKey(e => e.EventCategoryId);
+        });
+
+        modelBuilder.Entity<EventRegistration>(entity =>
+        {
+            entity.ToTable("EventRegistration");
+            entity.HasKey(e => e.EventRegistrationId);
+            entity.Property(e => e.Comments).HasMaxLength(500);
+            entity.Property(e => e.Status).HasMaxLength(20);
+            entity.Property(e => e.RegistrationCode).HasMaxLength(20);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            entity.HasOne<Event>().WithMany().HasForeignKey(e => e.EventId);
+            entity.HasOne<Resident>().WithMany().HasForeignKey(e => e.ResidentId);
+            entity.HasOne<Flat>().WithMany().HasForeignKey(e => e.FlatId);
+        });
+
+        modelBuilder.Entity<EventNotification>(entity =>
+        {
+            entity.ToTable("EventNotification");
+            entity.HasKey(e => e.EventNotificationId);
+            entity.Property(e => e.Message).HasMaxLength(200);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            entity.HasOne<Event>().WithMany().HasForeignKey(e => e.EventId);
+            entity.HasOne<UserLogin>().WithMany().HasForeignKey(e => e.RecipientUserId);
         });
 
         modelBuilder.Entity<ComplaintCategory>(entity =>

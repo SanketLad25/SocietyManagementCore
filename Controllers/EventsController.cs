@@ -9,7 +9,7 @@ namespace SocietyManagementCore.Controllers;
 [ApiController]
 [Route("api/events")]
 [Authorize]
-public class EventsController(EventService eventService) : ControllerBase
+public class EventsController(EventService eventService, EventRegistrationService registrationService) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<List<EventResponse>>> List([FromQuery] int? categoryId, [FromQuery] string? status)
@@ -50,5 +50,59 @@ public class EventsController(EventService eventService) : ControllerBase
         }
 
         return Ok(result.Data);
+    }
+
+    [HttpPost("{eventId:int}/cancel")]
+    [Authorize(Roles = RoleNames.NoticeManagerRoles)]
+    public async Task<ActionResult<EventResponse>> Cancel(int eventId, EventCancelRequest request)
+    {
+        var result = await eventService.CancelAsync(eventId, request);
+        if (!result.Success)
+        {
+            return result.Error == "Event not found."
+                ? NotFound(new { message = result.Error })
+                : Conflict(new { message = result.Error });
+        }
+
+        return Ok(result.Data);
+    }
+
+    [HttpGet("{eventId:int}/registrations")]
+    [Authorize(Roles = RoleNames.NoticeManagerRoles)]
+    public async Task<ActionResult<List<EventRegistrationResponse>>> ListRegistrations(int eventId)
+    {
+        return Ok(await registrationService.ListForEventAsync(eventId));
+    }
+
+    [HttpPost("{eventId:int}/registrations/{registrationId:int}/promote")]
+    [Authorize(Roles = RoleNames.NoticeManagerRoles)]
+    public async Task<IActionResult> PromoteRegistration(int eventId, int registrationId)
+    {
+        var result = await registrationService.PromoteAsync(eventId, registrationId);
+        return result.Success ? Ok() : Conflict(new { message = result.Error });
+    }
+
+    [HttpPost("{eventId:int}/interest")]
+    [Authorize(Roles = RoleNames.Resident)]
+    public async Task<IActionResult> MarkInterested(int eventId)
+    {
+        var result = await registrationService.MarkInterestedAsync(eventId);
+        return result.Success ? Ok() : Conflict(new { message = result.Error });
+    }
+
+    [HttpPost("{eventId:int}/join")]
+    [Authorize(Roles = RoleNames.Resident)]
+    public async Task<IActionResult> Join(int eventId, EventRegistrationRequest request)
+    {
+        var result = await registrationService.JoinAsync(eventId, request);
+        return result.Success ? Ok() : Conflict(new { message = result.Error });
+    }
+
+    [HttpPost("{eventId:int}/cancel-registration")]
+    [Authorize(Roles = RoleNames.Resident)]
+    public async Task<IActionResult> CancelRegistration(int eventId)
+    {
+        var result = await registrationService.CancelMyRegistrationAsync(eventId);
+        return result.Success ? Ok() : Conflict(new { message = result.Error });
     }
 }

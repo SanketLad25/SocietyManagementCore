@@ -54,7 +54,9 @@ builder.Services.AddScoped<ComplaintService>();
 builder.Services.AddScoped<ComplaintAttachmentService>();
 builder.Services.AddScoped<ComplaintNotificationService>();
 builder.Services.AddScoped<EventCategoryService>();
+builder.Services.AddScoped<EventNotificationService>();
 builder.Services.AddScoped<EventService>();
+builder.Services.AddScoped<EventRegistrationService>();
 
 var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
     ?? throw new InvalidOperationException("Jwt configuration section is missing.");
