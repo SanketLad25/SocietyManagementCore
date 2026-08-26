@@ -22,4 +22,10 @@ public class Complaint : ITenantScoped
     public int? CreatedBy { get; set; }
     public DateTime? ModifiedOn { get; set; }
     public int? ModifiedBy { get; set; }
+
+    /// SocChatBot.md Phase 5 / 014_chat_confirmation.sql: NULL for every complaint created through
+    /// the ordinary REST endpoint. Stamped only when raise_complaint is executed via a confirmed chat
+    /// action, so a retried POST /api/chat/confirm with the same token can detect and return the
+    /// already-created complaint instead of inserting a duplicate.
+    public Guid? IdempotencyKey { get; set; }
 }

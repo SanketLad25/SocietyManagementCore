@@ -97,7 +97,13 @@ public class ComplaintService(
 
     /// Resident only. Resolves the caller's own ResidentId/current FlatId — a resident always
     /// raises a complaint as themselves, never on behalf of someone else.
-    public async Task<ServiceResult<ComplaintResponse>> CreateAsync(ComplaintRequest request)
+    ///
+    /// `idempotencyKey` (SocChatBot.md Phase 5): null for every ordinary REST call — only
+    /// ChatOrchestrationService.ConfirmActionAsync passes a real one, when raise_complaint is
+    /// executed after the resident explicitly confirms it via the chatbot. A retried confirm with the
+    /// same token must not create a second complaint, so an existing row with the same
+    /// (SocietyId, IdempotencyKey) is returned as-is instead of inserting again.
+    public async Task<ServiceResult<ComplaintResponse>> CreateAsync(ComplaintRequest request, Guid? idempotencyKey = null)
     {
         if (currentUser.SocietyId is not { } societyId)
         {
@@ -112,6 +118,16 @@ public class ComplaintService(
         if (!ComplaintPriorities.All.Contains(request.Priority))
         {
             return ServiceResult<ComplaintResponse>.Fail("Invalid priority.");
+        }
+
+        if (idempotencyKey is { } key)
+        {
+            var existing = await db.Complaints.FirstOrDefaultAsync(c => c.SocietyId == societyId && c.IdempotencyKey == key);
+            if (existing is not null)
+            {
+                var existingResponses = await ToResponsesAsync(new List<Complaint> { existing });
+                return ServiceResult<ComplaintResponse>.Ok(existingResponses[0]);
+            }
         }
 
         var categoryValid = await db.ComplaintCategories.AnyAsync(c =>
@@ -132,10 +148,23 @@ public class ComplaintService(
             Description = request.Description,
             Priority = request.Priority,
             Status = ComplaintStatuses.Open,
+            IdempotencyKey = idempotencyKey,
         };
 
         db.Complaints.Add(complaint);
-        await db.SaveChangesAsync();
+
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // Covers a raced retry on the same idempotencyKey slipping past the lookup above (two
+            // near-simultaneous confirms) — UX_Complaint_IdempotencyKey rejects the second insert;
+            // surface it as a friendly failure instead of a raw 500, matching every other service's
+            // insert/delete convention in this app.
+            return ServiceResult<ComplaintResponse>.Fail("Unable to save complaint. Please try again.");
+        }
 
         db.ComplaintUpdates.Add(new ComplaintUpdate
         {

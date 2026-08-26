@@ -36,4 +36,32 @@ public class PercentageOfCategoryStrategy : ICalculationStrategy
         var baseAmount = context.CategoryAmountResolver(parameters.BaseCategoryId);
         return baseAmount * (rule.Rate / 100m);
     }
+
+    public (bool IsValid, string? Error) ValidateParameters(string? parametersJson)
+    {
+        if (string.IsNullOrWhiteSpace(parametersJson))
+        {
+            return (false, "PercentageOfCategory requires ParametersJson: {\"BaseCategoryId\": <id>}.");
+        }
+
+        Parameters? parameters;
+        try
+        {
+            parameters = JsonSerializer.Deserialize<Parameters>(parametersJson, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+            });
+        }
+        catch (JsonException ex)
+        {
+            return (false, $"ParametersJson is not valid: {ex.Message}");
+        }
+
+        if (parameters is null || parameters.BaseCategoryId <= 0)
+        {
+            return (false, "ParametersJson must specify a valid BaseCategoryId.");
+        }
+
+        return (true, null);
+    }
 }

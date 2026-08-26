@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using SocietyManagementCore.Data;
 using SocietyManagementCore.Models.Dtos;
 using SocietyManagementCore.Models.Entities;
+using SocietyManagementCore.Services.Calculation;
 
 namespace SocietyManagementCore.Services;
 
@@ -9,6 +10,7 @@ public class MaintenanceChargeRuleService(
     SocietyDbContext db,
     ICurrentUserContext currentUser,
     MaintenanceTargetResolver targetResolver,
+    CalculationStrategyFactory strategyFactory,
     AuditLogService auditLog)
 {
     public async Task<List<MaintenanceChargeRuleResponse>> ListAsync(int? categoryId)
@@ -69,10 +71,16 @@ public class MaintenanceChargeRuleService(
             return ServiceResult<MaintenanceChargeRuleResponse>.Fail("Billing frequency not found.");
         }
 
-        var methodValid = await db.CalculationMethods.AnyAsync(m => m.CalculationMethodId == request.CalculationMethodId);
-        if (!methodValid)
+        var method = await db.CalculationMethods.FirstOrDefaultAsync(m => m.CalculationMethodId == request.CalculationMethodId);
+        if (method is null)
         {
             return ServiceResult<MaintenanceChargeRuleResponse>.Fail("Calculation method not found.");
+        }
+
+        var (parametersValid, parametersError) = strategyFactory.Resolve(method.MethodCode).ValidateParameters(request.ParametersJson);
+        if (!parametersValid)
+        {
+            return ServiceResult<MaintenanceChargeRuleResponse>.Fail(parametersError ?? "ParametersJson is invalid for the selected calculation method.");
         }
 
         var hasOverlap = await HasOverlapAsync(societyId, request.CategoryId, request.ChargeTargetTypeId, request.TargetId, request.EffectiveFrom);
@@ -116,6 +124,21 @@ public class MaintenanceChargeRuleService(
         if (request.EffectiveFrom <= currentRule.EffectiveFrom)
         {
             return ServiceResult<MaintenanceChargeRuleResponse>.Fail("The new rate's effective date must be after the current rule's start date.");
+        }
+
+        var methodCode = await db.CalculationMethods
+            .Where(m => m.CalculationMethodId == currentRule.CalculationMethodId)
+            .Select(m => m.MethodCode)
+            .FirstOrDefaultAsync();
+        if (methodCode is null)
+        {
+            return ServiceResult<MaintenanceChargeRuleResponse>.Fail("Calculation method not found.");
+        }
+
+        var (parametersValid, parametersError) = strategyFactory.Resolve(methodCode).ValidateParameters(request.ParametersJson);
+        if (!parametersValid)
+        {
+            return ServiceResult<MaintenanceChargeRuleResponse>.Fail(parametersError ?? "ParametersJson is invalid for the selected calculation method.");
         }
 
         var newRule = new MaintenanceChargeRule

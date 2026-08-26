@@ -10,4 +10,7 @@ public class PerUnitStrategy : ICalculationStrategy
 
     public decimal Calculate(MaintenanceChargeRule rule, FlatBillingContext context) =>
         rule.Rate * context.UnitCountResolver(rule.TargetId ?? 0);
+
+    /// ParametersJson is unused by this method (it keys off Rule.TargetId instead) — nothing to validate.
+    public (bool IsValid, string? Error) ValidateParameters(string? parametersJson) => (true, null);
 }

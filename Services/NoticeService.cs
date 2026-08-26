@@ -10,7 +10,9 @@ public class NoticeService(
     ICurrentUserContext currentUser,
     AuditLogService auditLog,
     INoticeBroadcastService broadcastService,
-    NoticeAttachmentService attachmentService)
+    NoticeAttachmentService attachmentService,
+    IngestionService ingestionService,
+    ILogger<NoticeService> logger)
 {
     private static readonly string[] ManagerRoles = RoleNames.NoticeManagerRoles.Split(',');
 
@@ -148,6 +150,19 @@ public class NoticeService(
         await db.SaveChangesAsync();
         await auditLog.LogAsync("Publish", "Notice", notice.NoticeId, notice.Title);
 
+        // SocChatBot.md Fix 1: Draft -> Published is one-way (NoticeStatuses.cs) — this is the only
+        // "published status changed" hook Notice has, so it's where ingestion must be wired. A
+        // notice must be searchable immediately on publish, not only after the next admin-triggered
+        // IngestAllPublishedAsync run. An ingestion failure must not roll back the publish that
+        // already succeeded — log it and move on.
+        var ingestResult = await ingestionService.IngestNoticeAsync(notice.SocietyId, notice);
+        if (!ingestResult.Success)
+        {
+            logger.LogWarning(
+                "Ingestion failed for published Notice {NoticeId} in society {SocietyId}: {Error}",
+                notice.NoticeId, notice.SocietyId, ingestResult.Error);
+        }
+
         var attachments = await db.NoticeAttachments.Where(a => a.NoticeId == notice.NoticeId).ToListAsync();
         await broadcastService.BroadcastAsync(notice, attachments);
 
@@ -176,6 +191,18 @@ public class NoticeService(
         db.Notices.Remove(notice);
         await db.SaveChangesAsync();
         await auditLog.LogAsync("Delete", "Notice", noticeId, notice.Title);
+
+        // SocChatBot.md Fix 1: a deleted notice (published or not) must not leave stale, still-
+        // searchable chunks behind — no-op if the notice was never published (no chunks exist). A
+        // failure here (e.g. a transient DB blip) must not roll back the notice delete that already
+        // succeeded — log it and move on, same as an ingestion failure on publish already does.
+        var removeResult = await ingestionService.RemoveSourceChunksAsync(notice.SocietyId, DocumentChunkSourceTypes.Notice, noticeId);
+        if (!removeResult.Success)
+        {
+            logger.LogWarning(
+                "Removing search index chunks failed for deleted Notice {NoticeId} in society {SocietyId}: {Error}",
+                noticeId, notice.SocietyId, removeResult.Error);
+        }
 
         return ServiceResult<bool>.Ok(true);
     }

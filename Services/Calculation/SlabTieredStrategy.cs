@@ -58,4 +58,37 @@ public class SlabTieredStrategy : ICalculationStrategy
 
         return total;
     }
+
+    public (bool IsValid, string? Error) ValidateParameters(string? parametersJson)
+    {
+        if (string.IsNullOrWhiteSpace(parametersJson))
+        {
+            return (false, "SlabTiered requires ParametersJson: a JSON array of slabs, e.g. [{\"UpToSqFt\":500,\"RatePerSqFt\":2}].");
+        }
+
+        List<Slab>? slabs;
+        try
+        {
+            slabs = JsonSerializer.Deserialize<List<Slab>>(parametersJson, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+            });
+        }
+        catch (JsonException ex)
+        {
+            return (false, $"ParametersJson is not a valid slab array: {ex.Message}");
+        }
+
+        if (slabs is null || slabs.Count == 0)
+        {
+            return (false, "ParametersJson must contain at least one slab.");
+        }
+
+        if (slabs.Any(s => s.RatePerSqFt < 0))
+        {
+            return (false, "Slab RatePerSqFt values cannot be negative.");
+        }
+
+        return (true, null);
+    }
 }

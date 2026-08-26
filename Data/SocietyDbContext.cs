@@ -42,6 +42,17 @@ public class SocietyDbContext(DbContextOptions<SocietyDbContext> options, ICurre
     public DbSet<ComplaintUpdate> ComplaintUpdates => Set<ComplaintUpdate>();
     public DbSet<ComplaintAttachment> ComplaintAttachments => Set<ComplaintAttachment>();
     public DbSet<ComplaintNotification> ComplaintNotifications => Set<ComplaintNotification>();
+    public DbSet<KnowledgeArticle> KnowledgeArticles => Set<KnowledgeArticle>();
+    public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
+    public DbSet<ChunkEmbedding> ChunkEmbeddings => Set<ChunkEmbedding>();
+    public DbSet<ChatSession> ChatSessions => Set<ChatSession>();
+    public DbSet<ChatMessageRecord> ChatMessageRecords => Set<ChatMessageRecord>();
+    public DbSet<ChatPendingAction> ChatPendingActions => Set<ChatPendingAction>();
+    public DbSet<VisitorCategory> VisitorCategories => Set<VisitorCategory>();
+    public DbSet<VisitorLog> VisitorLogs => Set<VisitorLog>();
+    public DbSet<VisitorLogMember> VisitorLogMembers => Set<VisitorLogMember>();
+    public DbSet<VisitorAttachment> VisitorAttachments => Set<VisitorAttachment>();
+    public DbSet<VisitorNotification> VisitorNotifications => Set<VisitorNotification>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -411,6 +422,11 @@ public class SocietyDbContext(DbContextOptions<SocietyDbContext> options, ICurre
             entity.Property(e => e.AssignedToName).HasMaxLength(100);
             entity.Property(e => e.AssignedToContact).HasMaxLength(20);
             entity.Property(e => e.AssignmentNotes).HasMaxLength(300);
+            // SocChatBot.md Phase 5 / 014_chat_confirmation.sql: nullable, filtered-unique-indexed at
+            // the SQL level (not expressed here — EF's fluent HasIndex(...).IsUnique() with a filter
+            // predicate isn't used anywhere else in this codebase's raw-SQL-schema mapping convention;
+            // the index already exists in the DB from the migration).
+            entity.Property(e => e.IdempotencyKey);
             entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
             entity.HasOne<Resident>().WithMany().HasForeignKey(e => e.ResidentId);
             entity.HasOne<Flat>().WithMany().HasForeignKey(e => e.FlatId);
@@ -451,6 +467,127 @@ public class SocietyDbContext(DbContextOptions<SocietyDbContext> options, ICurre
             entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
             entity.HasOne<Complaint>().WithMany().HasForeignKey(e => e.ComplaintId);
             entity.HasOne<UserLogin>().WithMany().HasForeignKey(e => e.RecipientUserId);
+        });
+
+        modelBuilder.Entity<VisitorCategory>(entity =>
+        {
+            entity.ToTable("VisitorCategory");
+            entity.HasKey(e => e.VisitorCategoryId);
+            entity.Property(e => e.CategoryName).HasMaxLength(100);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+        });
+
+        modelBuilder.Entity<VisitorLog>(entity =>
+        {
+            entity.ToTable("VisitorLog");
+            entity.HasKey(e => e.VisitorLogId);
+            entity.Property(e => e.PrimaryVisitorName).HasMaxLength(100);
+            entity.Property(e => e.PrimaryMobile).HasMaxLength(15);
+            entity.Property(e => e.VehicleNo).HasMaxLength(20);
+            entity.Property(e => e.CompanyName).HasMaxLength(100);
+            entity.Property(e => e.Purpose).HasMaxLength(300);
+            entity.Property(e => e.Status).HasMaxLength(20);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            entity.HasOne<Flat>().WithMany().HasForeignKey(e => e.FlatId);
+            entity.HasOne<VisitorCategory>().WithMany().HasForeignKey(e => e.VisitorCategoryId);
+            entity.HasOne<UserLogin>().WithMany().HasForeignKey(e => e.LoggedByUserId);
+            entity.HasOne<UserLogin>().WithMany().HasForeignKey(e => e.CheckedOutByUserId);
+        });
+
+        modelBuilder.Entity<VisitorLogMember>(entity =>
+        {
+            entity.ToTable("VisitorLogMember");
+            entity.HasKey(e => e.VisitorLogMemberId);
+            entity.Property(e => e.MemberName).HasMaxLength(100);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            entity.HasOne<VisitorLog>().WithMany().HasForeignKey(e => e.VisitorLogId);
+        });
+
+        modelBuilder.Entity<VisitorAttachment>(entity =>
+        {
+            entity.ToTable("VisitorAttachment");
+            entity.HasKey(e => e.VisitorAttachmentId);
+            entity.Property(e => e.FileName).HasMaxLength(255);
+            entity.Property(e => e.ContentType).HasMaxLength(100);
+            entity.Property(e => e.StoragePath).HasMaxLength(400);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            entity.HasOne<VisitorLog>().WithMany().HasForeignKey(e => e.VisitorLogId);
+        });
+
+        modelBuilder.Entity<VisitorNotification>(entity =>
+        {
+            entity.ToTable("VisitorNotification");
+            entity.HasKey(e => e.VisitorNotificationId);
+            entity.Property(e => e.Message).HasMaxLength(200);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            entity.HasOne<VisitorLog>().WithMany().HasForeignKey(e => e.VisitorLogId);
+            entity.HasOne<UserLogin>().WithMany().HasForeignKey(e => e.RecipientUserId);
+        });
+
+        modelBuilder.Entity<KnowledgeArticle>(entity =>
+        {
+            entity.ToTable("KnowledgeArticle");
+            entity.HasKey(e => e.KnowledgeArticleId);
+            entity.Property(e => e.Title).HasMaxLength(200);
+            entity.Property(e => e.Category).HasMaxLength(100);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+        });
+
+        modelBuilder.Entity<DocumentChunk>(entity =>
+        {
+            entity.ToTable("DocumentChunk");
+            entity.HasKey(e => e.DocumentChunkId);
+            entity.Property(e => e.SourceType).HasMaxLength(20);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            // SourceId is deliberately not mapped as an FK (see DocumentChunk.cs) — polymorphic
+            // pointer at either Notice or KnowledgeArticle.
+        });
+
+        modelBuilder.Entity<ChunkEmbedding>(entity =>
+        {
+            entity.ToTable("ChunkEmbedding");
+            entity.HasKey(e => e.ChunkEmbeddingId);
+            // Native VECTOR column via EFCore.SqlServer.VectorSearch (see .UseVectorSearch() in
+            // Program.cs) — 1024 matches the schema's ChunkEmbedding.Embedding VECTOR(1024) column,
+            // which itself matches Voyage AI voyage-2's dimension count. A provider switch to a
+            // different dimension count would need its own migration, not just a config change,
+            // since the column width is fixed at the schema level.
+            entity.Property(e => e.Embedding).HasColumnType("vector(1024)");
+            entity.Property(e => e.EmbeddingProvider).HasMaxLength(50);
+            entity.Property(e => e.EmbeddingModel).HasMaxLength(100);
+            entity.HasOne<DocumentChunk>().WithMany().HasForeignKey(e => e.DocumentChunkId);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+        });
+
+        modelBuilder.Entity<ChatSession>(entity =>
+        {
+            entity.ToTable("ChatSession");
+            entity.HasKey(e => e.ChatSessionId);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            entity.HasOne<UserLogin>().WithMany().HasForeignKey(e => e.UserId);
+            entity.HasOne<Resident>().WithMany().HasForeignKey(e => e.ResidentId);
+        });
+
+        modelBuilder.Entity<ChatMessageRecord>(entity =>
+        {
+            // Entity name deliberately doesn't match the table name — see ChatMessageRecord.cs's doc
+            // comment (collision with Services.ChatMessage, the LLM-turn DTO).
+            entity.ToTable("ChatMessage");
+            entity.HasKey(e => e.ChatMessageId);
+            entity.Property(e => e.Role).HasMaxLength(20);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            entity.HasOne<ChatSession>().WithMany().HasForeignKey(e => e.ChatSessionId);
+        });
+
+        modelBuilder.Entity<ChatPendingAction>(entity =>
+        {
+            entity.ToTable("ChatPendingAction");
+            entity.HasKey(e => e.ChatPendingActionId);
+            entity.Property(e => e.ToolName).HasMaxLength(50);
+            entity.Property(e => e.ToolUseId).HasMaxLength(100);
+            entity.Property(e => e.Status).HasMaxLength(20);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            entity.HasOne<ChatSession>().WithMany().HasForeignKey(e => e.ChatSessionId);
         });
     }
 

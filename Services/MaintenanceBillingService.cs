@@ -102,6 +102,21 @@ public class MaintenanceBillingService(
 
     /// Refuses to run twice on the same cycle (mm §6 step 4) — once Generated, revisit via a new
     /// cycle rather than mutating this one.
+    ///
+    /// Bug fix (code review, 2026-08-26): the original version checked `cycle.Status != "Draft"`
+    /// once, then looped every flat with a SaveChangesAsync per bill and no transaction — two
+    /// concurrent calls (double-click, or two committee members) could both read "Draft" before
+    /// either wrote "Generated", both proceed through the whole flat loop, and both insert a full
+    /// set of bills with no error, no signal, silently double-billing every flat. Fixed two ways:
+    /// (1) the Draft -> Generating transition below is a single conditional UPDATE
+    /// (ExecuteUpdateAsync WHERE Status = 'Draft'), not read-then-write — a losing concurrent call
+    /// gets rowsUpdated == 0 and fails cleanly instead of racing through; (2) a unique index on
+    /// MaintenanceBill(CycleId, FlatId) (016_maintenance_billing_race_fix.sql) is a second line of
+    /// defense against any other double-insert path. As a side effect this also makes a retry
+    /// after a partial failure (e.g. one flat's rule throws) safe: already-billed flats are
+    /// skipped via the same unique constraint rather than re-billed, and the cycle reverts to
+    /// "Draft" (not left stuck in "Generating") if generation doesn't fully complete, so a retry
+    /// is actually possible.
     public async Task<ServiceResult<List<MaintenanceBillResponse>>> GenerateAsync(int cycleId)
     {
         var cycle = await FindCycleInSocietyAsync(cycleId);
@@ -115,53 +130,92 @@ public class MaintenanceBillingService(
             return ServiceResult<List<MaintenanceBillResponse>>.Fail("This cycle has already been generated.");
         }
 
+        var claimed = await db.MaintenanceBillingCycles
+            .Where(c => c.CycleId == cycle.CycleId && c.Status == "Draft")
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, "Generating"));
+        if (claimed == 0)
+        {
+            // Lost a race against a concurrent Generate call on the same cycle — the winner's
+            // conditional UPDATE already claimed it.
+            return ServiceResult<List<MaintenanceBillResponse>>.Fail("This cycle has already been generated.");
+        }
+
         var (activeRules, activeExemptions, targetTypeCodes, methodCodes, categories) = await LoadBillingInputsAsync(cycle);
         var flats = await db.Flats.Where(f => f.SocietyId == cycle.SocietyId).ToListAsync();
+        var alreadyBilledFlatIds = await db.MaintenanceBills
+            .Where(b => b.CycleId == cycle.CycleId && b.FlatId != null)
+            .Select(b => b.FlatId!.Value)
+            .ToListAsync();
+        var alreadyBilled = new HashSet<int>(alreadyBilledFlatIds);
 
         var responses = new List<MaintenanceBillResponse>();
 
-        foreach (var flat in flats)
+        try
         {
-            var lineItems = await ComputeLineItemsForFlatAsync(cycle.SocietyId, flat, activeRules, activeExemptions, targetTypeCodes, methodCodes, categories);
-            if (lineItems.Count == 0)
+            foreach (var flat in flats)
             {
-                continue;
-            }
+                // A retry after a previous partial failure — flats already billed in the earlier
+                // attempt are skipped rather than double-billed.
+                if (alreadyBilled.Contains(flat.FlatId))
+                {
+                    continue;
+                }
 
-            var totalAmount = lineItems.Sum(li => li.Amount);
-            var bill = new MaintenanceBill
-            {
-                SocietyId = cycle.SocietyId,
-                FlatId = flat.FlatId,
-                BillMonth = cycle.PeriodStart.Month,
-                BillYear = cycle.PeriodStart.Year,
-                Amount = totalAmount,
-                DueDate = cycle.DueDate,
-                Status = "Unpaid",
-                CycleId = cycle.CycleId,
-                OutstandingAmount = totalAmount,
-                PenaltyAmount = 0,
-            };
+                var lineItems = await ComputeLineItemsForFlatAsync(cycle.SocietyId, flat, activeRules, activeExemptions, targetTypeCodes, methodCodes, categories);
+                if (lineItems.Count == 0)
+                {
+                    continue;
+                }
 
-            db.MaintenanceBills.Add(bill);
-            await db.SaveChangesAsync();
-
-            foreach (var lineItem in lineItems)
-            {
-                db.MaintenanceBillLineItems.Add(new MaintenanceBillLineItem
+                var totalAmount = lineItems.Sum(li => li.Amount);
+                var bill = new MaintenanceBill
                 {
                     SocietyId = cycle.SocietyId,
-                    BillId = bill.BillId,
-                    RuleId = lineItem.Rule.RuleId,
-                    CategoryId = lineItem.Rule.CategoryId,
-                    Description = lineItem.Category.CategoryName,
-                    Amount = lineItem.Amount,
-                    CreatedOn = DateTime.UtcNow,
-                });
-            }
+                    FlatId = flat.FlatId,
+                    BillMonth = cycle.PeriodStart.Month,
+                    BillYear = cycle.PeriodStart.Year,
+                    Amount = totalAmount,
+                    DueDate = cycle.DueDate,
+                    Status = "Unpaid",
+                    CycleId = cycle.CycleId,
+                    OutstandingAmount = totalAmount,
+                    PenaltyAmount = 0,
+                };
 
-            await db.SaveChangesAsync();
-            responses.Add(await ToBillResponseAsync(bill));
+                db.MaintenanceBills.Add(bill);
+                await db.SaveChangesAsync();
+
+                foreach (var lineItem in lineItems)
+                {
+                    db.MaintenanceBillLineItems.Add(new MaintenanceBillLineItem
+                    {
+                        SocietyId = cycle.SocietyId,
+                        BillId = bill.BillId,
+                        RuleId = lineItem.Rule.RuleId,
+                        CategoryId = lineItem.Rule.CategoryId,
+                        Description = lineItem.Category.CategoryName,
+                        Amount = lineItem.Amount,
+                        CreatedOn = DateTime.UtcNow,
+                    });
+                }
+
+                await db.SaveChangesAsync();
+                responses.Add(await ToBillResponseAsync(bill));
+            }
+        }
+        catch (DbUpdateException)
+        {
+            await RevertToDraftAsync(cycle.CycleId);
+            return ServiceResult<List<MaintenanceBillResponse>>.Fail(
+                "Unable to save one or more bills (a duplicate or database error occurred). The cycle was reverted to Draft — fix the underlying issue and try generating again; flats already billed won't be billed twice.");
+        }
+        catch (Exception)
+        {
+            // A calculation-strategy failure (e.g. malformed charge-rule parameters) — don't leave
+            // the cycle stuck in "Generating" with no way to retry.
+            await RevertToDraftAsync(cycle.CycleId);
+            return ServiceResult<List<MaintenanceBillResponse>>.Fail(
+                "Unable to compute charges for one or more flats — check the charge rules for this society. The cycle was reverted to Draft; flats already billed won't be billed twice when you retry.");
         }
 
         cycle.Status = "Generated";
@@ -171,6 +225,13 @@ public class MaintenanceBillingService(
         await auditLog.LogAsync("Generate", "MaintenanceBillingCycle", cycle.CycleId, $"{responses.Count} bills generated");
 
         return ServiceResult<List<MaintenanceBillResponse>>.Ok(responses);
+    }
+
+    private async Task RevertToDraftAsync(int cycleId)
+    {
+        await db.MaintenanceBillingCycles
+            .Where(c => c.CycleId == cycleId && c.Status == "Generating")
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, "Draft"));
     }
 
     /// Flips a Generated cycle to Published — the point at which residents can see their bills
