@@ -30,7 +30,9 @@ public class ParkingService(SocietyDbContext db, ICurrentUserContext currentUser
             query = query.Where(x =>
                 (x.FlatNo != null && x.FlatNo.Contains(term)) ||
                 (x.Parking.VehicleNo != null && x.Parking.VehicleNo.Contains(term)) ||
-                (x.Parking.ParkingNo != null && x.Parking.ParkingNo.Contains(term)));
+                (x.Parking.ParkingNo != null && x.Parking.ParkingNo.Contains(term)) ||
+                (x.Parking.VehicleType != null && x.Parking.VehicleType.Contains(term)) ||
+                (x.TypeName != null && x.TypeName.Contains(term)));
         }
 
         var rows = await query.OrderBy(x => x.FlatNo).ThenBy(x => x.TypeName).ToListAsync();
