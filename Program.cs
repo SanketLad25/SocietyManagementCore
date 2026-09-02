@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using SocietyManagementCore.Data;
+using SocietyManagementCore.Middleware;
 using SocietyManagementCore.Options;
 using SocietyManagementCore.Services;
 using SocietyManagementCore.Services.Calculation;
@@ -23,6 +24,8 @@ builder.Services.AddDbContext<SocietyDbContext>(options =>
         sqlOptions => sqlOptions.UseVectorSearch()));
 
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
 builder.Services.AddScoped<ICurrentUserContext, CurrentUserContext>();
 builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<AuthService>();
@@ -176,6 +179,8 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
+
+app.UseExceptionHandler();
 
 app.UseCors(ReactAppCorsPolicy);
 
