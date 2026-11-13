@@ -29,6 +29,8 @@ public class MaintenanceBillResponse
     public string? ContactNumber { get; set; }
     public decimal? InterestOnArrearsPercent { get; set; }
 
-    // Static placeholder until real payment-recording tracks running arrears per flat (Phase 4).
+    // Live-computed in MaintenanceBillingService.ToBillResponseAsync: the sum of this flat's OTHER
+    // still-outstanding bills (Unpaid/Partially Paid), excluding this bill's own due amount — see
+    // that method for why arrears and this-bill's-own OutstandingAmount are kept deliberately separate.
     public decimal ArrearsAmount { get; set; }
 }

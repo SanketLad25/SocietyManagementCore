@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using SocietyManagementCore.Data;
+using SocietyManagementCore.Extensions;
 using SocietyManagementCore.Middleware;
 using SocietyManagementCore.Options;
 using SocietyManagementCore.Services;
@@ -18,6 +19,8 @@ builder.Services.Configure<EmbeddingOptions>(builder.Configuration.GetSection("E
 builder.Services.Configure<AnthropicOptions>(builder.Configuration.GetSection("Anthropic"));
 builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection("Llm"));
 
+builder.Services.AddCustomServices();
+
 builder.Services.AddDbContext<SocietyDbContext>(options =>
     options.UseSqlServer(
         builder.Configuration.GetConnectionString("SocietyManagement"),
@@ -26,51 +29,6 @@ builder.Services.AddDbContext<SocietyDbContext>(options =>
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
-builder.Services.AddScoped<ICurrentUserContext, CurrentUserContext>();
-builder.Services.AddScoped<JwtTokenService>();
-builder.Services.AddScoped<AuthService>();
-builder.Services.AddScoped<ResidentService>();
-builder.Services.AddScoped<AdminUserService>();
-builder.Services.AddScoped<SocietyService>();
-builder.Services.AddScoped<FlatService>();
-builder.Services.AddScoped<AuditLogService>();
-builder.Services.AddScoped<MaintenanceCategoryService>();
-builder.Services.AddScoped<BillingFrequencyService>();
-builder.Services.AddScoped<ParkingTypeService>();
-builder.Services.AddScoped<ParkingService>();
-builder.Services.AddScoped<AmenityService>();
-builder.Services.AddScoped<FlatGroupService>();
-builder.Services.AddScoped<ChargeTargetTypeService>();
-builder.Services.AddScoped<ICalculationStrategy, FixedAmountStrategy>();
-builder.Services.AddScoped<ICalculationStrategy, PerSqFtStrategy>();
-builder.Services.AddScoped<ICalculationStrategy, PerUnitStrategy>();
-builder.Services.AddScoped<ICalculationStrategy, SlabTieredStrategy>();
-builder.Services.AddScoped<ICalculationStrategy, PercentageOfCategoryStrategy>();
-builder.Services.AddScoped<ICalculationStrategy, FormulaStrategy>();
-builder.Services.AddScoped<CalculationStrategyFactory>();
-builder.Services.AddScoped<MaintenanceTargetResolver>();
-builder.Services.AddScoped<MaintenanceChargeRuleService>();
-builder.Services.AddScoped<MaintenanceExemptionService>();
-builder.Services.AddScoped<AmenitySubscriptionService>();
-builder.Services.AddScoped<CalculationMethodService>();
-builder.Services.AddScoped<MaintenanceBillingService>();
-builder.Services.AddScoped<NoticeCategoryService>();
-builder.Services.AddScoped<NoticeAttachmentService>();
-builder.Services.AddScoped<NoticeService>();
-builder.Services.AddScoped<INoticeBroadcastService, NoOpNoticeBroadcastService>();
-builder.Services.AddScoped<ComplaintCategoryService>();
-builder.Services.AddScoped<ComplaintService>();
-builder.Services.AddScoped<ComplaintAttachmentService>();
-builder.Services.AddScoped<ComplaintNotificationService>();
-builder.Services.AddScoped<EventCategoryService>();
-builder.Services.AddScoped<EventNotificationService>();
-builder.Services.AddScoped<EventService>();
-builder.Services.AddScoped<EventRegistrationService>();
-builder.Services.AddScoped<KnowledgeArticleService>();
-builder.Services.AddScoped<VisitorCategoryService>();
-builder.Services.AddScoped<VisitorNotificationService>();
-builder.Services.AddScoped<VisitorLogService>();
-builder.Services.AddScoped<VisitorAttachmentService>();
 
 // Embeddings provider abstraction (SocChatBot.md "Embedding provider abstraction"): IngestionService/
 // IRetrievalService only ever depend on IEmbeddingService, never on VoyageEmbeddingService directly.
@@ -102,7 +60,7 @@ builder.Services.AddHttpClient<ClaudeClient>();
 // only ever depend on IChatCompletionService, never on ClaudeClient directly — same provider-switch
 // shape as the embeddings registration above. Default is "Stub" (appsettings.Development.json) so
 // development proceeds at no cost; flipping Llm:Provider to "Anthropic" once Anthropic:ApiKey has
-// credit requires no code change.
+// credit requires no code change.`
 builder.Services.AddScoped<StubChatCompletionService>();
 builder.Services.AddScoped<IChatCompletionService>(sp =>
 {

@@ -29,6 +29,7 @@ public class SocietyDbContext(DbContextOptions<SocietyDbContext> options, ICurre
     public DbSet<MaintenanceBillingCycle> MaintenanceBillingCycles => Set<MaintenanceBillingCycle>();
     public DbSet<MaintenanceBill> MaintenanceBills => Set<MaintenanceBill>();
     public DbSet<MaintenanceBillLineItem> MaintenanceBillLineItems => Set<MaintenanceBillLineItem>();
+    public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<NoticeCategory> NoticeCategories => Set<NoticeCategory>();
     public DbSet<Notice> Notices => Set<Notice>();
     public DbSet<NoticeAttachment> NoticeAttachments => Set<NoticeAttachment>();
@@ -316,6 +317,22 @@ public class SocietyDbContext(DbContextOptions<SocietyDbContext> options, ICurre
             entity.HasOne<MaintenanceBill>().WithMany().HasForeignKey(e => e.BillId);
             entity.HasOne<MaintenanceChargeRule>().WithMany().HasForeignKey(e => e.RuleId);
             entity.HasOne<MaintenanceCategory>().WithMany().HasForeignKey(e => e.CategoryId);
+        });
+
+        modelBuilder.Entity<Payment>(entity =>
+        {
+            entity.ToTable("Payment");
+            entity.HasKey(e => e.PaymentId);
+            entity.Property(e => e.ReceiptNo).HasMaxLength(30);
+            entity.Property(e => e.AmountPaid).HasColumnType("decimal(10,2)");
+            entity.Property(e => e.PaymentMode).HasMaxLength(20);
+            entity.Property(e => e.TransactionId).HasMaxLength(100);
+            entity.Property(e => e.Status).HasMaxLength(20);
+            entity.Property(e => e.Notes).HasMaxLength(300);
+            entity.Property(e => e.CancelledReason).HasMaxLength(300);
+            entity.HasOne<Society>().WithMany().HasForeignKey(e => e.SocietyId);
+            entity.HasOne<MaintenanceBill>().WithMany().HasForeignKey(e => e.BillId);
+            entity.HasOne<UserLogin>().WithMany().HasForeignKey(e => e.CancelledBy);
         });
 
         modelBuilder.Entity<NoticeCategory>(entity =>

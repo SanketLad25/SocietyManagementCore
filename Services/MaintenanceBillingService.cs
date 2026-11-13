@@ -168,6 +168,15 @@ public class MaintenanceBillingService(
                 }
 
                 var totalAmount = lineItems.Sum(li => li.Amount);
+
+                // Late-fee auto-computation isn't built yet (accounts-management skill §2) — always 0
+                // for now. OutstandingAmount deliberately already folds this in (not just totalAmount)
+                // so the invariant "OutstandingAmount always includes PenaltyAmount" holds from bill
+                // generation onward, matching PaymentService.RecomputeBillStatusAsync's amountDue
+                // formula exactly. When a late-fee feature lands, compute it here instead of hardcoding
+                // — OutstandingAmount below stays correct automatically, no other call site to update.
+                const decimal penaltyAmount = 0m;
+
                 var bill = new MaintenanceBill
                 {
                     SocietyId = cycle.SocietyId,
@@ -178,8 +187,8 @@ public class MaintenanceBillingService(
                     DueDate = cycle.DueDate,
                     Status = "Unpaid",
                     CycleId = cycle.CycleId,
-                    OutstandingAmount = totalAmount,
-                    PenaltyAmount = 0,
+                    OutstandingAmount = totalAmount + penaltyAmount,
+                    PenaltyAmount = penaltyAmount,
                 };
 
                 db.MaintenanceBills.Add(bill);
@@ -470,6 +479,15 @@ public class MaintenanceBillingService(
                 Amount = li.Amount,
             }).ToListAsync();
 
+        // Arrears = this flat's OTHER still-outstanding bills, not this bill's own due amount
+        // (PaymentService.RecomputeBillStatusAsync keeps those two numbers deliberately separate —
+        // see that method's comment — so summing them here, not there, is the one place arrears is
+        // computed, live, off each other bill's own OutstandingAmount).
+        var arrearsAmount = await db.MaintenanceBills
+            .Where(b => b.SocietyId == bill.SocietyId && b.FlatId == bill.FlatId && b.BillId != bill.BillId &&
+                (b.Status == "Unpaid" || b.Status == "Partially Paid"))
+            .SumAsync(b => (decimal?)(b.OutstandingAmount ?? 0m)) ?? 0m;
+
         return new MaintenanceBillResponse
         {
             BillId = bill.BillId,
@@ -495,7 +513,7 @@ public class MaintenanceBillingService(
             ChequePayeeName = society?.ChequePayeeName,
             ContactNumber = society?.ContactNumber,
             InterestOnArrearsPercent = society?.InterestOnArrearsPercent,
-            ArrearsAmount = 0,
+            ArrearsAmount = arrearsAmount,
         };
     }
 
